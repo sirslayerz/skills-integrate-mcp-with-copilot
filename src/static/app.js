@@ -3,6 +3,86 @@ document.addEventListener("DOMContentLoaded", () => {
   const activitySelect = document.getElementById("activity");
   const signupForm = document.getElementById("signup-form");
   const messageDiv = document.getElementById("message");
+  const signupContainer = document.getElementById("signup-container");
+  const loginModal = document.getElementById("login-modal");
+  const loginForm = document.getElementById("login-form");
+  const userIcon = document.getElementById("user-icon");
+  const closeLogin = document.getElementById("close-login");
+  const loggedInUser = document.getElementById("logged-in-user");
+  const logoutButton = document.getElementById("logout-button");
+  let currentTeacher = null;
+
+  function showMessage(text, className) {
+    messageDiv.textContent = text;
+    messageDiv.className = className;
+    messageDiv.classList.remove("hidden");
+
+    setTimeout(() => {
+      messageDiv.classList.add("hidden");
+    }, 5000);
+  }
+
+  function updateTeacherControls() {
+    signupContainer.classList.toggle("hidden", !currentTeacher);
+    loggedInUser.classList.toggle("hidden", !currentTeacher);
+    logoutButton.classList.toggle("hidden", !currentTeacher);
+    userIcon.classList.toggle("hidden", Boolean(currentTeacher));
+
+    if (currentTeacher) {
+      loggedInUser.textContent = `Teacher: ${currentTeacher.username}`;
+    }
+
+    fetchActivities();
+  }
+
+  userIcon.addEventListener("click", () => {
+    loginModal.classList.remove("hidden");
+  });
+
+  closeLogin.addEventListener("click", () => {
+    loginModal.classList.add("hidden");
+  });
+
+  loginModal.addEventListener("click", (event) => {
+    if (event.target === loginModal) {
+      loginModal.classList.add("hidden");
+    }
+  });
+
+  loginForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const username = document.getElementById("username").value;
+    const password = document.getElementById("password").value;
+
+    try {
+      const response = await fetch("/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        showMessage(result.detail || "Login failed", "error");
+        return;
+      }
+
+      currentTeacher = { username, password };
+      loginModal.classList.add("hidden");
+      loginForm.reset();
+      updateTeacherControls();
+      showMessage(result.message, "success");
+    } catch (error) {
+      showMessage("Failed to log in. Please try again.", "error");
+      console.error("Error logging in:", error);
+    }
+  });
+
+  logoutButton.addEventListener("click", () => {
+    currentTeacher = null;
+    updateTeacherControls();
+    showMessage("Logged out successfully", "info");
+  });
 
   // Function to fetch activities from API
   async function fetchActivities() {
@@ -12,6 +92,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // Clear loading message
       activitiesList.innerHTML = "";
+      activitySelect.innerHTML = '<option value="">-- Select an activity --</option>';
 
       // Populate activities list
       Object.entries(activities).forEach(([name, details]) => {
@@ -30,7 +111,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 ${details.participants
                   .map(
                     (email) =>
-                      `<li><span class="participant-email">${email}</span><button class="delete-btn" data-activity="${name}" data-email="${email}">❌</button></li>`
+                      `<li><span class="participant-email">${email}</span>${currentTeacher ? `<button class="delete-btn" data-activity="${name}" data-email="${email}">❌</button>` : ""}</li>`
                   )
                   .join("")}
               </ul>
@@ -80,6 +161,13 @@ document.addEventListener("DOMContentLoaded", () => {
         )}/unregister?email=${encodeURIComponent(email)}`,
         {
           method: "DELETE",
+          headers: currentTeacher
+            ? {
+                Authorization: `Basic ${btoa(
+                  `${currentTeacher.username}:${currentTeacher.password}`
+                )}`,
+              }
+            : {},
         }
       );
 
@@ -114,6 +202,11 @@ document.addEventListener("DOMContentLoaded", () => {
   signupForm.addEventListener("submit", async (event) => {
     event.preventDefault();
 
+    if (!currentTeacher) {
+      showMessage("Please log in as a teacher to sign up a student.", "error");
+      return;
+    }
+
     const email = document.getElementById("email").value;
     const activity = document.getElementById("activity").value;
 
@@ -124,6 +217,11 @@ document.addEventListener("DOMContentLoaded", () => {
         )}/signup?email=${encodeURIComponent(email)}`,
         {
           method: "POST",
+          headers: {
+            Authorization: `Basic ${btoa(
+              `${currentTeacher.username}:${currentTeacher.password}`
+            )}`,
+          },
         }
       );
 
