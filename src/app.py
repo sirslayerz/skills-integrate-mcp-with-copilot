@@ -5,9 +5,10 @@ A super simple FastAPI application that allows students to view and sign up
 for extracurricular activities at Mergington High School.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
+import json
 import os
 from pathlib import Path
 
@@ -18,6 +19,64 @@ app = FastAPI(title="Mergington High School API",
 current_dir = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
           "static")), name="static")
+
+
+def load_teachers():
+    """Load teacher credentials from the JSON file."""
+    teacher_file = Path(__file__).parent / "teachers.json"
+    if not teacher_file.exists():
+        return {}
+
+    with teacher_file.open("r", encoding="utf-8") as file:
+        data = json.load(file)
+
+    if isinstance(data, dict):
+        if isinstance(data.get("teachers"), list):
+            data = data["teachers"]
+        else:
+            return data
+
+    if isinstance(data, list):
+        return {
+            teacher["username"]: teacher["password"]
+            for teacher in data
+            if isinstance(teacher, dict)
+            and "username" in teacher
+            and "password" in teacher
+        }
+
+    return {}
+
+
+teachers = load_teachers()
+
+
+def is_authenticated(username: str | None, password: str | None) -> bool:
+    return bool(username and password and teachers.get(username) == password)
+
+
+def extract_credentials(request: Request, username: str | None, password: str | None):
+    if username or password:
+        return username, password
+
+    authorization = request.headers.get("authorization", "")
+    if authorization.startswith("Basic "):
+        import base64
+
+        try:
+            decoded = base64.b64decode(authorization.removeprefix("Basic ")).decode("utf-8")
+            basic_username, basic_password = decoded.split(":", 1)
+            return basic_username, basic_password
+        except (ValueError, UnicodeDecodeError):
+            return None, None
+
+    return None, None
+
+
+def require_teacher(request: Request, username: str | None, password: str | None):
+    username, password = extract_credentials(request, username, password)
+    if not is_authenticated(username, password):
+        raise HTTPException(status_code=401, detail="Invalid teacher credentials")
 
 # In-memory activity database
 activities = {
@@ -88,9 +147,41 @@ def get_activities():
     return activities
 
 
+@app.post("/login")
+async def login(request: Request):
+    username = request.query_params.get("username")
+    password = request.query_params.get("password")
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    if isinstance(body, dict):
+        username = body.get("username", username)
+        password = body.get("password", password)
+
+    if not is_authenticated(username, password):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    return {"message": "Logged in successfully", "username": username}
+
+
 @app.post("/activities/{activity_name}/signup")
-def signup_for_activity(activity_name: str, email: str):
+def signup_for_activity(
+    activity_name: str,
+    request: Request,
+    email: str,
+    username: str | None = None,
+    password: str | None = None,
+    teacher_username: str | None = None,
+    teacher_password: str | None = None,
+):
     """Sign up a student for an activity"""
+    username = username or teacher_username
+    password = password or teacher_password
+    require_teacher(request, username, password)
+
     # Validate activity exists
     if activity_name not in activities:
         raise HTTPException(status_code=404, detail="Activity not found")
@@ -111,8 +202,20 @@ def signup_for_activity(activity_name: str, email: str):
 
 
 @app.delete("/activities/{activity_name}/unregister")
-def unregister_from_activity(activity_name: str, email: str):
+def unregister_from_activity(
+    activity_name: str,
+    request: Request,
+    email: str,
+    username: str | None = None,
+    password: str | None = None,
+    teacher_username: str | None = None,
+    teacher_password: str | None = None,
+):
     """Unregister a student from an activity"""
+    username = username or teacher_username
+    password = password or teacher_password
+    require_teacher(request, username, password)
+
     # Validate activity exists
     if activity_name not in activities:
         raise HTTPException(status_code=404, detail="Activity not found")
